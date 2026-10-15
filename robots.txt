@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+# The Impressum is excluded via <meta name="robots" content="noindex"> in impressum.html.
+# Do not add "Disallow: /impressum.html" here: crawlers would then never see the noindex tag
+# and could still list the URL.

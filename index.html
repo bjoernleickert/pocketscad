@@ -1,0 +1,905 @@
+<!doctype html>
+<!-- Pocket SCAD. SPDX-License-Identifier: GPL-3.0-or-later. Third-party components: see THIRD_PARTY_NOTICES.md -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+<title>Pocket SCAD</title>
+<meta name="description" content="Write OpenSCAD code on any device, preview it in 3D and export STL or 3MF for your 3D printer. Runs entirely in your browser.">
+<style>
+/* Layout: one-screen workbench. Phone = tabbed (Code / Model / Params) with a fixed action bar; wide = editor left, viewport right. Model face color is OpenSCAD's own preview yellow. */
+:root{
+  --bg:#eef1f4; --panel:#ffffff; --ink:#1b2430; --muted:#5f6b7a; --line:#d5dbe3;
+  --accent:#2f6fd6; --accent-ink:#ffffff; --model:#f1cc3b; --code-bg:#f7f9fb;
+  --ok:#1f8a4c; --warn:#b26a00; --err:#c4322b; --vp:#e4e8ee; --grid:#b9c2ce;
+  --f-ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --f-code:ui-monospace,"SFMono-Regular","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12161c; --panel:#1a2029; --ink:#e3e8ef; --muted:#93a0b1; --line:#2c3542;
+  --accent:#6ea2ff; --accent-ink:#0d1420; --model:#e8c232; --code-bg:#151a22;
+  --ok:#4cc584; --warn:#e6a23c; --err:#ff7a70; --vp:#0f1318; --grid:#38424f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12161c; --panel:#1a2029; --ink:#e3e8ef; --muted:#93a0b1; --line:#2c3542;
+  --accent:#6ea2ff; --accent-ink:#0d1420; --model:#e8c232; --code-bg:#151a22;
+  --ok:#4cc584; --warn:#e6a23c; --err:#ff7a70; --vp:#0f1318; --grid:#38424f; color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;overflow:hidden}
+*{box-sizing:border-box}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.app{height:100%;display:grid;grid-template-rows:auto 1fr auto;
+  padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px))}
+
+header{display:flex;align-items:center;gap:10px;padding-block:10px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
+.brand{font-weight:700;letter-spacing:-.01em;font-size:17px;white-space:nowrap}
+.brand small{font-weight:500;color:var(--muted);font-size:12px;margin-left:6px;letter-spacing:.04em;text-transform:uppercase}
+.spacer{flex:1}
+.status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.dot.ok{background:var(--ok)} .dot.busy{background:var(--warn);animation:pulse 1s infinite} .dot.err{background:var(--err)}
+@keyframes pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.dot.busy{animation:none}}
+
+.tabs{display:none}
+main{display:grid;grid-template-columns:minmax(320px,44%) 1fr;min-height:0}
+.pane{min-height:0;min-width:0;display:flex;flex-direction:column}
+.pane-code{border-right:1px solid var(--line);background:var(--panel)}
+
+.toolbar{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.toolbar select{background:var(--code-bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-width:100%}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:7px 12px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn:disabled{opacity:.5;cursor:default}
+
+.editor-wrap{flex:1;min-height:0;position:relative;background:var(--code-bg)}
+#code{position:absolute;inset:0;width:100%;height:100%;resize:none;border:0;padding:14px;background:transparent;
+  font-family:var(--f-code);font-size:14px;line-height:1.55;tab-size:4;color:var(--ink);white-space:pre;overflow:auto;outline:none}
+.symbar{display:flex;gap:4px;overflow-x:auto;padding:6px 8px;border-top:1px solid var(--line);background:var(--panel);scrollbar-width:none}
+.symbar::-webkit-scrollbar{display:none}
+.symbar button{flex:none;min-width:38px;height:38px;border:1px solid var(--line);border-radius:6px;background:var(--code-bg);
+  font-family:var(--f-code);font-size:15px;cursor:pointer}
+.symbar button:active{background:var(--accent);color:var(--accent-ink)}
+
+.console{border-top:1px solid var(--line);background:var(--panel);max-height:28%;display:flex;flex-direction:column}
+.console summary{cursor:pointer;padding:6px 12px;font-size:12px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;list-style:none;display:flex;gap:8px}
+.console summary::-webkit-details-marker{display:none}
+.console summary .count{color:var(--err)}
+#log{margin:0;padding:6px 12px 10px;overflow:auto;font-family:var(--f-code);font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:var(--muted)}
+#log .e{color:var(--err)} #log .w{color:var(--warn)}
+
+.pane-view{position:relative;background:var(--vp)}
+#viewport{position:absolute;inset:0}
+#viewport canvas{display:block;width:100%;height:100%;touch-action:none}
+.hud{position:absolute;left:12px;bottom:12px;font-family:var(--f-code);font-size:12px;color:var(--muted);
+  background:color-mix(in srgb,var(--panel) 85%,transparent);border:1px solid var(--line);border-radius:6px;padding:6px 9px;line-height:1.5;pointer-events:none;font-variant-numeric:tabular-nums}
+.hud b{color:var(--ink);font-weight:500}
+.vtools{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:6px}
+.vtools .btn{padding:6px 10px;font-size:13px;background:color-mix(in srgb,var(--panel) 90%,transparent)}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.overlay .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;max-width:min(360px,86%);
+  font-size:14px;line-height:1.5;pointer-events:auto;box-shadow:0 6px 24px rgba(0,0,0,.12)}
+.overlay .card h3{margin:0 0 6px;font-size:15px}
+.overlay .card p{margin:0;color:var(--muted)}
+.bar{height:4px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:10px}
+.bar i{display:block;height:100%;width:40%;background:var(--accent);animation:slide 1.2s infinite ease-in-out}
+@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+@media (prefers-reduced-motion:reduce){.bar i{animation:none;width:100%}}
+
+.params{padding:12px 16px;overflow:auto;display:grid;gap:14px;align-content:start}
+.params h4{margin:0;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.param{display:grid;gap:6px}
+.param label{display:flex;justify-content:space-between;gap:10px;font-size:14px}
+.param label span:last-child{font-family:var(--f-code);color:var(--accent);font-variant-numeric:tabular-nums}
+.param input[type=range]{width:100%;accent-color:var(--accent)}
+.param input[type=number],.param input[type=text],.param select{background:var(--code-bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%}
+.param .hint{font-size:12px;color:var(--muted)}
+.params .empty{color:var(--muted);font-size:14px;line-height:1.55}
+.params code{font-family:var(--f-code);font-size:12.5px;background:var(--code-bg);border:1px solid var(--line);border-radius:4px;padding:1px 4px}
+.side-params{border-top:1px solid var(--line);max-height:34%;overflow:auto;background:var(--panel)}
+
+footer{display:flex;gap:8px;align-items:center;padding-block:10px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  border-top:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+footer .auto{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);
+  padding:9px 14px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);z-index:10}
+
+.links{display:flex;gap:12px;font-size:13px;flex:none}
+.links a{color:var(--muted);text-decoration:none}
+.links a:hover{color:var(--accent);text-decoration:underline}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:0;max-width:min(380px,calc(100% - 32px));box-shadow:0 12px 40px rgba(0,0,0,.25)}
+dialog::backdrop{background:rgba(10,14,20,.45)}
+.tip{display:grid;gap:12px;padding:20px}
+.tip h2{margin:0;font-size:18px;text-wrap:balance}
+.tip p{margin:0;color:var(--muted);line-height:1.5}
+.tip-go{text-align:center;text-decoration:none;padding:10px 12px}
+.about .legal{font-size:13px}
+.about-links{margin:0;padding-left:1.1em;display:grid;gap:4px}
+.about a{color:var(--accent)}
+.tip-never{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+
+/* Phone: tabbed panes */
+@media (max-width:760px){
+  .tabs{display:flex;background:var(--panel);border-bottom:1px solid var(--line)}
+  .tabs button{flex:1;border:0;background:none;padding:10px 0;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer}
+  .tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
+  .app{grid-template-rows:auto auto 1fr auto}
+  main{grid-template-columns:1fr}
+  .pane{display:none}
+  .pane.active{display:flex}
+  .pane-code{border-right:0}
+  .side-params{display:none}
+  .brand small{display:none}
+  .status #statusText{display:none}
+}
+@media (min-width:761px){ #pane-params{display:none} }
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">Pocket SCAD<small>OpenSCAD in your browser</small></div>
+    <div class="spacer"></div>
+    <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Starting…</span></div>
+    <nav class="links" aria-label="Site">
+      <a href="#" id="aboutLink">About</a>
+      <a href="#" id="supportLink">Support</a>
+      <a href="impressum.html" rel="nofollow">Impressum</a>
+    </nav>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-code" aria-selected="true" data-pane="pane-code">Code</button>
+    <button role="tab" id="tab-view" aria-selected="false" data-pane="pane-view">Model</button>
+    <button role="tab" id="tab-params" aria-selected="false" data-pane="pane-params">Params</button>
+  </nav>
+
+  <main>
+    <section class="pane pane-code active" id="pane-code">
+      <div class="toolbar">
+        <select id="examples" aria-label="Load an example">
+          <option value="">Examples…</option>
+        </select>
+        <button class="btn" id="openBtn">Open .scad</button>
+        <input type="file" id="fileInput" accept=".scad,.txt,text/plain" hidden>
+      </div>
+      <div class="editor-wrap">
+        <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="OpenSCAD code"></textarea>
+      </div>
+      <div class="symbar" id="symbar" aria-label="Insert symbol"></div>
+      <div class="side-params params" id="sideParams"></div>
+      <details class="console" id="consoleBox">
+        <summary>Console <span class="count" id="errCount"></span></summary>
+        <pre id="log"></pre>
+      </details>
+    </section>
+
+    <section class="pane pane-view" id="pane-view">
+      <div id="viewport"></div>
+      <div class="vtools">
+        <button class="btn" id="fitBtn" title="Fit model in view">Fit</button>
+        <button class="btn" id="topBtn" title="View from top">Top</button>
+        <button class="btn" id="isoBtn" title="Isometric view">Iso</button>
+      </div>
+      <div class="hud" id="hud" hidden></div>
+      <div class="overlay" id="overlay">
+        <div class="card" id="overlayCard">
+          <h3>Loading OpenSCAD engine</h3>
+          <p>About 14 MB on the first visit. Your browser caches it after that.</p>
+          <div class="bar"><i></i></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="pane params" id="pane-params"></section>
+  </main>
+
+  <footer>
+    <button class="btn primary" id="renderBtn" disabled>Render</button>
+    <button class="btn" id="stopBtn" hidden>Stop</button>
+    <label class="auto"><input type="checkbox" id="autoParams" checked> Re-render on param change</label>
+    <div class="spacer"></div>
+    <button class="btn" id="exportStl" disabled>Export STL</button>
+    <button class="btn" id="export3mf" disabled>Export 3MF</button>
+  </footer>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<dialog id="aboutDialog" aria-labelledby="aboutTitle">
+  <form method="dialog" class="tip about">
+    <h2 id="aboutTitle">Pocket SCAD</h2>
+    <p>OpenSCAD in your pocket. Code, preview and export 3D models right in your browser.</p>
+    <p class="legal">© 2026 Björn Leickert<br>
+    Pocket SCAD is free software: you can redistribute and modify it under the terms of the GNU General Public License, version 3 or (at your option) any later version. It comes with <strong>absolutely no warranty</strong>.</p>
+    <ul class="about-links">
+      <li><a id="srcLink" href="#" target="_blank" rel="noopener">Source code</a></li>
+      <li><a id="licLink" href="#" target="_blank" rel="noopener">License (GPL-3.0-or-later)</a></li>
+      <li><a id="tpLink" href="#" target="_blank" rel="noopener">Third-party components and their licenses</a></li>
+    </ul>
+    <p class="legal">Built on <a href="https://github.com/openscad/openscad-wasm" target="_blank" rel="noopener">OpenSCAD (WebAssembly build)</a>, GPL, and <a href="https://github.com/mrdoob/three.js" target="_blank" rel="noopener">three.js</a>, MIT. Not affiliated with the OpenSCAD project.</p>
+    <button class="btn" value="close">Close</button>
+  </form>
+</dialog>
+
+<dialog id="tipDialog" aria-labelledby="tipTitle">
+  <form method="dialog" class="tip">
+    <h2 id="tipTitle">Your model is ready to print</h2>
+    <p>Pocket SCAD is free and open source. If it saved you a trip to the computer, a small tip helps keep it maintained.</p>
+    <a class="btn primary tip-go" id="tipGo" href="#" target="_blank" rel="noopener">Leave a tip</a>
+    <label class="tip-never"><input type="checkbox" id="tipNever"> Don't show this again</label>
+    <button class="btn" value="close" id="tipClose">Maybe later</button>
+  </form>
+</dialog>
+
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three/three.module.js",
+  "three/addons/":"./vendor/three/addons/"
+}}
+</script>
+
+<script>
+/* ---------- OpenSCAD engine (runs in a Web Worker, or on the main thread as fallback) ---------- */
+function engineFactory(URLS){
+  // Compile the embedded wasm once and reuse it for every fresh instance.
+  const W = WebAssembly, origCompile = W.compile.bind(W), origInst = W.instantiate.bind(W);
+  let cachedMod = null;
+  W.compile = (src) => cachedMod ? Promise.resolve(cachedMod) : origCompile(src).then(m => (cachedMod = m));
+  W.instantiate = async (src, imports) => {
+    if (src instanceof W.Module) return origInst(src, imports);
+    const m = await W.compile(src);
+    return { module: m, instance: await origInst(m, imports) };
+  };
+  let factory = null;
+  const backendVariants = [["--backend=manifold"], ["--enable=manifold"], []];
+  let variant = 0;
+
+  async function load(){
+    if (factory) return;
+    let lastErr;
+    for (const u of URLS){
+      try{
+        const mod = await import(u);
+        const f = typeof mod.default === "function" ? mod.default
+          : (mod.createOpenSCAD || mod.OpenSCAD || (mod.default && (mod.default.createOpenSCAD || mod.default.OpenSCAD)));
+        if (typeof f !== "function") throw new Error("Engine module has no usable export");
+        factory = f; return;
+      }catch(e){ lastErr = e; }
+    }
+    throw lastErr || new Error("Could not load the engine");
+  }
+
+  async function newInstance(log){
+    const r = await factory({ noInitialRun: true, print: t => log("o", t), printErr: t => log("e", t) });
+    const inst = (r && typeof r.getInstance === "function") ? await r.getInstance() : r;
+    if (!inst || !inst.FS || typeof inst.callMain !== "function") throw new Error("Engine instance lacks FS/callMain");
+    return inst;
+  }
+
+  async function runOnce(code, defs, extra, log){
+    const inst = await newInstance(log);
+    inst.FS.writeFile("/input.scad", code);
+    const args = ["/input.scad", "-o", "/out.stl", ...extra];
+    for (const d of defs) args.push("-D", d);
+    let exit = 0;
+    try { exit = inst.callMain(args); } catch(e){ exit = (e && typeof e.status === "number") ? e.status : 1; if (!(e && "status" in e)) log("e", String(e && e.message || e)); }
+    let stl = null;
+    try { stl = inst.FS.readFile("/out.stl"); } catch(_){}
+    return { exit, stl };
+  }
+
+  async function render(code, defs, log){
+    await load();
+    const lines = [];
+    const tap = (k, t) => { lines.push(t); log(k, t); };
+    while (true){
+      lines.length = 0;
+      const t0 = Date.now();
+      const { exit, stl } = await runOnce(code, defs, backendVariants[variant], tap);
+      const optionProblem = lines.some(l => /unrecogni[sz]ed option|unknown option|unknown feature|invalid.*backend|backend.*invalid/i.test(l));
+      if ((!stl || !stl.length) && optionProblem && variant < backendVariants.length - 1){ variant++; continue; }
+      return { ok: !!(stl && stl.length), stl, exit, ms: Date.now() - t0 };
+    }
+  }
+  return { load, render };
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+
+/* ---------- Settings: edit these ---------- */
+// Your tip page (Ko-fi, Buy Me a Coffee, GitHub Sponsors …). Placeholder for now.
+const TIP_URL = "https://ko-fi.com/pocketscad";
+// Public source repository (shown in the About dialog, required by the GPL).
+const SOURCE_URL = "https://github.com/bjoernleickert/pocketscad";
+const SOURCE_BRANCH = "main";
+// Show the tip popup after the 1st export, then after every Nth export.
+const TIP_EVERY = 5;
+// OpenSCAD engine: the official build from github.com/openscad/openscad-wasm goes in vendor/openscad/.
+const ENGINE_LOCAL = "./vendor/openscad/openscad.js";
+// Until that file exists, fall back to the openscad-wasm package on public CDNs.
+// Set to false for production (privacy: the CDN sees visitors' IP addresses).
+const ALLOW_CDN_FALLBACK = false;
+const ENGINE_CDN = [
+  "https://cdn.jsdelivr.net/npm/openscad-wasm@0.0.4/openscad.js",
+  "https://unpkg.com/openscad-wasm@0.0.4/openscad.js"
+];
+const ENGINE_URLS = [new URL(ENGINE_LOCAL, location.href).href, ...(ALLOW_CDN_FALLBACK ? ENGINE_CDN : [])];
+
+const $ = id => document.getElementById(id);
+const store = { get(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(_){} } };
+
+/* ---------- Examples ---------- */
+const EXAMPLES = {
+  "Parametric box": `// Parametric storage box. Units: mm
+// Outer width
+width = 60;   // [20:1:150]
+// Outer depth
+depth = 40;   // [20:1:150]
+// Outer height
+height = 30;  // [10:1:100]
+// Wall thickness
+wall = 2;     // [0.8:0.2:5]
+// Corner radius
+radius = 4;   // [0:0.5:15]
+// Add finger notch
+notch = true;
+
+$fn = 48;
+
+module rounded(w, d, h, r) {
+    r = max(min(r, w/2 - 0.01, d/2 - 0.01), 0.01);
+    hull() for (x = [r, w - r], y = [r, d - r])
+        translate([x, y, 0]) cylinder(r = r, h = h);
+}
+
+difference() {
+    rounded(width, depth, height, radius);
+    translate([wall, wall, wall])
+        rounded(width - 2*wall, depth - 2*wall, height, radius - wall);
+    if (notch)
+        translate([width/2, -1, height])
+            rotate([-90, 0, 0]) cylinder(r = 8, h = wall + 2);
+}
+`,
+  "Phone stand": `// Simple phone stand. Units: mm
+// Stand width
+width = 70;        // [40:5:120]
+// Lean angle of the phone
+angle = 65;        // [45:1:80]
+// Phone thickness incl. case
+phone = 12;        // [6:0.5:20]
+// Charging cable slot
+cable_slot = true;
+
+thick = 5;
+base = 80;
+
+difference() {
+    union() {
+        cube([base, width, thick]);
+        translate([base - 20, 0, 0])
+            rotate([0, -(90 - angle), 0]) cube([thick, width, 90]);
+        translate([10, 0, 0]) cube([thick, width, 14]);
+        translate([10 + thick + phone, 0, 0]) cube([thick, width, 10]);
+    }
+    if (cable_slot)
+        translate([0, width/2 - 5, -1]) cube([base - 25, 10, thick + 2]);
+}
+`,
+  "Twisted vase": `// Twisted vase from a linear_extrude. Units: mm
+// Height
+height = 120;   // [40:5:200]
+// Number of lobes
+lobes = 6;      // [3, 4, 5, 6, 8, 10]
+// Twist in degrees
+twist = 120;    // [0:10:360]
+// Top scale
+top_scale = 1.4; // [0.5:0.1:2]
+
+module profile(r)
+    offset(r = 4) offset(delta = -4)
+        for (i = [0 : lobes - 1])
+            rotate(i * 360 / lobes) translate([r * 0.35, 0]) circle(r = r * 0.6, $fn = 48);
+
+difference() {
+    linear_extrude(height = height, twist = twist, scale = top_scale, slices = 60)
+        profile(30);
+    translate([0, 0, 3])
+        linear_extrude(height = height, twist = twist, scale = top_scale, slices = 60)
+            offset(delta = -2) profile(30);
+}
+`,
+  "Hex nut & bolt": `// Rough hex nut and bolt (no thread). Units: mm
+// Thread diameter
+d = 8;          // [3:1:20]
+// Bolt length
+len = 30;       // [10:2:80]
+
+nut_w = d * 1.8;
+$fn = 40;
+
+module hex(w, h) cylinder(d = w / cos(30), h = h, $fn = 6);
+
+// Bolt
+hex(nut_w, d * 0.7);
+translate([0, 0, d * 0.7]) cylinder(d = d, h = len);
+
+// Nut
+translate([nut_w * 1.6, 0, 0])
+    difference() {
+        hex(nut_w, d * 0.8);
+        translate([0, 0, -1]) cylinder(d = d + 0.3, h = d + 2);
+    }
+`
+};
+const exSel = $("examples");
+for (const name of Object.keys(EXAMPLES)){ const o = document.createElement("option"); o.value = name; o.textContent = name; exSel.append(o); }
+
+/* ---------- Editor ---------- */
+const codeEl = $("code");
+codeEl.value = store.get("pocketscad.code") || EXAMPLES["Parametric box"];
+let saveTimer;
+codeEl.addEventListener("input", () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { store.set("pocketscad.code", codeEl.value); buildParams(); }, 400);
+});
+function insertAt(text, caretBack = 0){
+  const s = codeEl.selectionStart, e = codeEl.selectionEnd;
+  codeEl.setRangeText(text, s, e, "end");
+  const p = s + text.length - caretBack;
+  codeEl.setSelectionRange(p, p);
+  codeEl.focus();
+  codeEl.dispatchEvent(new Event("input"));
+}
+codeEl.addEventListener("keydown", ev => {
+  if (ev.key === "Tab"){ ev.preventDefault(); insertAt("    "); }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter"){ ev.preventDefault(); doRender(); }
+});
+const SYMS = [["{ }","{}",1],["( )","()",1],["[ ]","[]",1],[";",";",0],["=","= ",0],[",",", ",0],["<","<",0],[">",">",0],["$fn","$fn = ",0],["//","// ",0],["*","*",0],["/","/",0],["-","-",0],["+","+",0],["\"","\"\"",1],["⇥","    ",0]];
+const symbar = $("symbar");
+for (const [label, txt, back] of SYMS){
+  const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+  b.addEventListener("pointerdown", ev => ev.preventDefault()); // keep keyboard open
+  b.addEventListener("click", () => insertAt(txt, back));
+  symbar.append(b);
+}
+exSel.addEventListener("change", () => {
+  if (!exSel.value) return;
+  codeEl.value = EXAMPLES[exSel.value]; exSel.value = "";
+  overrides = {}; store.set("pocketscad.code", codeEl.value); buildParams(); doRender();
+});
+$("openBtn").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  codeEl.value = await f.text(); ev.target.value = "";
+  overrides = {}; store.set("pocketscad.code", codeEl.value); buildParams(); doRender();
+  toast(`Opened ${f.name}`);
+});
+
+/* ---------- Tabs ---------- */
+const tabs = document.querySelectorAll(".tabs button");
+function showPane(id){
+  tabs.forEach(t => t.setAttribute("aria-selected", String(t.dataset.pane === id)));
+  document.querySelectorAll("main > .pane").forEach(p => p.classList.toggle("active", p.id === id));
+  if (id === "pane-view") requestAnimationFrame(resize);
+}
+tabs.forEach(t => t.addEventListener("click", () => showPane(t.dataset.pane)));
+const narrow = () => matchMedia("(max-width:760px)").matches;
+
+/* ---------- Customizer ---------- */
+let overrides = {};
+try { overrides = JSON.parse(store.get("pocketscad.params") || "{}") || {}; } catch(_){ overrides = {}; }
+function parseValue(s){
+  s = s.trim();
+  if (/^-?\d*\.?\d+(e-?\d+)?$/i.test(s)) return { type: "number", v: parseFloat(s) };
+  if (s === "true" || s === "false") return { type: "bool", v: s === "true" };
+  const m = s.match(/^"(.*)"$/); if (m) return { type: "string", v: m[1] };
+  return null;
+}
+function parseParams(code){
+  const out = [];
+  const lines = code.split("\n");
+  let prevComment = "";
+  for (const line of lines){
+    if (/^\s*(module|function)\b/.test(line) || /^\s*[a-z_]\w*\s*\(/i.test(line) && !/=/.test(line)) break;
+    const c = line.match(/^\s*\/\/\s*(.+)$/);
+    if (c){ prevComment = c[1].trim(); continue; }
+    const m = line.match(/^\s*([A-Za-z_]\w*)\s*=\s*([^;]+);\s*(?:\/\/\s*(.*))?$/);
+    if (m && !m[1].startsWith("$")){
+      const val = parseValue(m[2]);
+      if (val){
+        const p = { name: m[1], ...val, label: prevComment || m[1].replace(/_/g, " "), widget: null };
+        const hint = (m[3] || "").trim();
+        const r = hint.match(/^\[\s*(-?[\d.]+)\s*:\s*(-?[\d.]+)\s*(?::\s*(-?[\d.]+))?\s*\]$/);
+        const l = hint.match(/^\[(.+)\]$/);
+        if (r && p.type === "number"){
+          const a = +r[1], b = +r[2], c3 = r[3] !== undefined ? +r[3] : null;
+          p.widget = c3 === null ? { kind: "range", min: a, max: b, step: Number.isInteger(a) && Number.isInteger(b) ? 1 : 0.1 } : { kind: "range", min: a, step: b, max: c3 };
+        } else if (l){
+          p.widget = { kind: "select", options: l[1].split(",").map(x => { const [v, lab] = x.split(":").map(s => s.trim()); return { v, lab: lab || v.replace(/^"|"$/g, "") }; }) };
+        }
+        out.push(p);
+      }
+    }
+    if (line.trim() !== "") prevComment = "";
+  }
+  return out;
+}
+function fmt(v){ return typeof v === "number" ? +v.toFixed(4) + "" : String(v); }
+let params = [];
+function buildParams(){
+  params = parseParams(codeEl.value);
+  const names = new Set(params.map(p => p.name));
+  for (const k of Object.keys(overrides)) if (!names.has(k)) delete overrides[k];
+  for (const host of [$("pane-params"), $("sideParams")]){
+    host.replaceChildren();
+    const h = document.createElement("h4"); h.textContent = "Parameters"; host.append(h);
+    if (!params.length){
+      const p = document.createElement("div"); p.className = "empty";
+      p.innerHTML = 'No parameters found. Top-level assignments become controls, for example <code>width = 40; // [10:100]</code> or <code>shape = "round"; // [round, square]</code>.';
+      host.append(p); continue;
+    }
+    for (const p of params){
+      const cur = p.name in overrides ? overrides[p.name] : p.v;
+      const wrap = document.createElement("div"); wrap.className = "param";
+      const lab = document.createElement("label");
+      const id = host.id + "-" + p.name;
+      lab.htmlFor = id;
+      const a = document.createElement("span"); a.textContent = p.label;
+      const b = document.createElement("span"); b.textContent = p.type === "bool" ? "" : fmt(cur);
+      lab.append(a, b); wrap.append(lab);
+      let input;
+      if (p.type === "bool"){
+        input = document.createElement("input"); input.type = "checkbox"; input.checked = !!cur;
+        lab.prepend(input); lab.style.justifyContent = "flex-start";
+        input.addEventListener("change", () => setParam(p, input.checked));
+      } else if (p.widget && p.widget.kind === "range"){
+        input = document.createElement("input"); input.type = "range";
+        Object.assign(input, { min: p.widget.min, max: p.widget.max, step: p.widget.step, value: cur });
+        input.addEventListener("input", () => { b.textContent = fmt(+input.value); syncOther(p, +input.value); });
+        input.addEventListener("change", () => setParam(p, +input.value));
+      } else if (p.widget && p.widget.kind === "select"){
+        input = document.createElement("select");
+        for (const o of p.widget.options){ const op = document.createElement("option"); op.value = o.v; op.textContent = o.lab; input.append(op); }
+        input.value = p.type === "string" ? `"${cur}"` : String(cur);
+        if (input.value === "" ) input.value = String(cur);
+        input.addEventListener("change", () => { const pv = parseValue(input.value); setParam(p, pv ? pv.v : input.value); b.textContent = fmt(pv ? pv.v : input.value); });
+      } else {
+        input = document.createElement("input"); input.type = p.type === "number" ? "number" : "text";
+        input.value = cur; if (p.type === "number") input.step = "any";
+        input.addEventListener("change", () => { const v = p.type === "number" ? +input.value : input.value; b.textContent = fmt(v); setParam(p, v); });
+      }
+      input.id = id; input.dataset.param = p.name;
+      if (p.type !== "bool") wrap.append(input);
+      host.append(wrap);
+    }
+    const reset = document.createElement("button"); reset.className = "btn"; reset.textContent = "Reset to defaults";
+    reset.addEventListener("click", () => { overrides = {}; persistParams(); buildParams(); if ($("autoParams").checked) doRender(); });
+    host.append(reset);
+  }
+}
+function syncOther(p, v){
+  document.querySelectorAll(`[data-param="${p.name}"]`).forEach(el => { if (el.type === "range" && +el.value !== v) { el.value = v; el.parentElement.querySelector("label span:last-child").textContent = fmt(v); } });
+}
+function persistParams(){ store.set("pocketscad.params", JSON.stringify(overrides)); }
+let paramTimer;
+function setParam(p, v){
+  if (v === p.v) delete overrides[p.name]; else overrides[p.name] = v;
+  persistParams();
+  buildParams();
+  if ($("autoParams").checked){ clearTimeout(paramTimer); paramTimer = setTimeout(doRender, 250); }
+}
+function defines(){
+  return Object.entries(overrides).map(([k, v]) => typeof v === "string" ? `${k}="${v.replace(/"/g, '\\"')}"` : `${k}=${v}`);
+}
+
+/* ---------- Console / status ---------- */
+const logEl = $("log");
+let errCount = 0;
+function log(kind, text){
+  const line = document.createElement("div");
+  const isErr = /^(ERROR|Parser error)|error/i.test(text) && kind === "e";
+  const isWarn = /^WARNING/i.test(text);
+  if (isErr){ line.className = "e"; errCount++; } else if (isWarn) line.className = "w";
+  line.textContent = text;
+  logEl.append(line); logEl.scrollTop = logEl.scrollHeight;
+  $("errCount").textContent = errCount ? `${errCount} error${errCount > 1 ? "s" : ""}` : "";
+}
+function clearLog(){ logEl.replaceChildren(); errCount = 0; $("errCount").textContent = ""; }
+function status(kind, text){ $("dot").className = "dot " + kind; $("statusText").textContent = text; $("status").title = text; }
+function toast(t){ const el = $("toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2600); }
+function overlay(title, body, busy){
+  const card = $("overlayCard");
+  if (!title){ $("overlay").hidden = true; return; }
+  $("overlay").hidden = false;
+  card.replaceChildren();
+  const h = document.createElement("h3"); h.textContent = title;
+  const p = document.createElement("p"); p.textContent = body;
+  card.append(h, p);
+  if (busy){ const b = document.createElement("div"); b.className = "bar"; b.innerHTML = "<i></i>"; card.append(b); }
+}
+
+/* ---------- Engine host: worker first, main thread fallback ---------- */
+let worker = null, mainEngine = null, reqId = 0;
+const pending = new Map();
+function makeWorker(){
+  const src = `const E=(${engineFactory.toString()})(${JSON.stringify(ENGINE_URLS)});
+self.onmessage=async(ev)=>{const {id,type,code,defs}=ev.data;
+ const log=(k,t)=>self.postMessage({id,type:"log",k,t});
+ try{ if(type==="load"){await E.load();self.postMessage({id,type:"done"});}
+  else{const r=await E.render(code,defs,log);self.postMessage({id,type:"done",r},r.stl?[r.stl.buffer]:[]);} }
+ catch(e){self.postMessage({id,type:"fail",msg:String(e&&e.message||e)});}};`;
+  const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })), { type: "module" });
+  w.onmessage = ev => {
+    const m = ev.data, p = pending.get(m.id); if (!p) return;
+    if (m.type === "log") p.log(m.k, m.t);
+    else { pending.delete(m.id); m.type === "done" ? p.res(m.r) : p.rej(new Error(m.msg)); }
+  };
+  w.onerror = ev => { ev.preventDefault(); for (const [id, p] of pending){ pending.delete(id); p.rej(new Error("worker-crashed")); } };
+  return w;
+}
+function callWorker(msg, logFn){
+  return new Promise((res, rej) => { const id = ++reqId; pending.set(id, { res, rej, log: logFn }); worker.postMessage({ id, ...msg }); });
+}
+async function engineLoad(){
+  try{
+    worker = makeWorker();
+    await callWorker({ type: "load" }, () => {});
+    return "worker";
+  }catch(e){
+    if (worker){ worker.terminate(); worker = null; }
+    mainEngine = engineFactory(ENGINE_URLS);
+    await mainEngine.load();
+    return "main";
+  }
+}
+async function engineRender(code, defs){
+  if (worker) return callWorker({ type: "render", code, defs }, log);
+  return mainEngine.render(code, defs, log);
+}
+
+/* ---------- Viewer ---------- */
+const vp = $("viewport");
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+vp.append(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 10000);
+camera.up.set(0, 0, 1); camera.position.set(120, -160, 120);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.1));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+camera.add(keyLight); keyLight.position.set(1, 2, 3); scene.add(camera);
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let grid, axes;
+function buildGrid(size = 200){
+  if (grid) scene.remove(grid);
+  const step = size > 400 ? 50 : size > 100 ? 10 : 5;
+  const n = Math.ceil(size / step) * 2;
+  grid = new THREE.GridHelper(n * step, n, new THREE.Color(css("--grid")), new THREE.Color(css("--grid")));
+  grid.rotation.x = Math.PI / 2;
+  grid.material.transparent = true; grid.material.opacity = 0.5;
+  scene.add(grid);
+  if (axes) scene.remove(axes);
+  axes = new THREE.AxesHelper(Math.max(step * 3, 20)); // X red, Y green, Z blue, like OpenSCAD
+  scene.add(axes);
+}
+buildGrid();
+const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(css("--model")), roughness: 0.55, metalness: 0.05, flatShading: true });
+let mesh = null, lastStl = null, lastBox = null;
+
+function resize(){
+  const w = vp.clientWidth, h = vp.clientHeight; if (!w || !h) return;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(vp);
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { material.color.set(css("--model")); buildGrid(lastBox ? lastBox.getSize(new THREE.Vector3()).length() : 200); });
+new MutationObserver(() => { material.color.set(css("--model")); buildGrid(lastBox ? lastBox.getSize(new THREE.Vector3()).length() : 200); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+function frame(dir){
+  if (!lastBox) return;
+  const c = lastBox.getCenter(new THREE.Vector3()), r = lastBox.getSize(new THREE.Vector3()).length() / 2 || 10;
+  const d = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.1;
+  const v = (dir || new THREE.Vector3(0.6, -0.9, 0.7)).clone().normalize();
+  controls.target.copy(c); camera.position.copy(c).addScaledVector(v, d);
+  camera.near = d / 100; camera.far = d * 100; camera.updateProjectionMatrix();
+}
+$("fitBtn").onclick = () => frame(camera.position.clone().sub(controls.target));
+$("topBtn").onclick = () => frame(new THREE.Vector3(0, -0.0001, 1));
+$("isoBtn").onclick = () => frame();
+
+function showStl(bytes){
+  const geo = new STLLoader().parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  geo.computeBoundingBox();
+  if (mesh){ scene.remove(mesh); mesh.geometry.dispose(); }
+  mesh = new THREE.Mesh(geo, material); scene.add(mesh);
+  const first = !lastBox;
+  lastBox = geo.boundingBox.clone();
+  const s = lastBox.getSize(new THREE.Vector3());
+  buildGrid(Math.max(s.x, s.y) * 1.5);
+  if (first) frame(); else { /* keep the viewer's camera across re-renders */ }
+  const tris = geo.attributes.position.count / 3;
+  const hud = $("hud"); hud.hidden = false;
+  hud.innerHTML = `<b>${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)}</b> mm<br>${tris.toLocaleString()} triangles`;
+}
+
+/* ---------- Render ---------- */
+let busy = false, ready = false, queued = false;
+async function doRender(){
+  if (!ready) return;
+  if (busy){ queued = true; return; }
+  busy = true; queued = false;
+  clearLog();
+  $("renderBtn").disabled = true; $("stopBtn").hidden = !worker;
+  status("busy", "Rendering…");
+  if (!mesh) overlay("Rendering", "Running OpenSCAD on your code.", true);
+  try{
+    const r = await engineRender(codeEl.value, defines());
+    if (r.ok){
+      lastStl = r.stl; showStl(r.stl); overlay(null);
+      $("exportStl").disabled = false; $("export3mf").disabled = false;
+      status("ok", `Rendered in ${(r.ms / 1000).toFixed(1)} s`);
+      if (narrow() && !document.getElementById("pane-params").classList.contains("active")) showPane("pane-view");
+    } else {
+      status("err", "Render failed, see console");
+      $("consoleBox").open = true;
+      if (!mesh) overlay("No model yet", "OpenSCAD didn't produce a 3D shape. Check the console under the editor. Only 3D objects can be shown and exported.", false);
+      if (narrow()) showPane("pane-code");
+    }
+  }catch(e){
+    if (String(e.message) === "stopped"){ status("", "Render stopped"); }
+    else { status("err", "Render failed"); log("e", String(e.message || e)); $("consoleBox").open = true; }
+  }finally{
+    busy = false; $("renderBtn").disabled = false; $("stopBtn").hidden = true;
+    if (queued) doRender();
+  }
+}
+$("renderBtn").addEventListener("click", doRender);
+$("stopBtn").addEventListener("click", async () => {
+  if (!worker) return;
+  worker.terminate();
+  for (const [id, p] of pending){ pending.delete(id); p.rej(new Error("stopped")); }
+  worker = makeWorker(); queued = false;
+  try { await callWorker({ type: "load" }, () => {}); } catch(_){}
+});
+
+/* ---------- Export: STL and 3MF ---------- */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b){ let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+// Minimal ZIP writer (stored, no compression). Enough for 3MF packages.
+function zip(files){
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const d = new Date();
+  const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  for (const f of files){
+    const name = enc.encode(f.name), data = typeof f.data === "string" ? enc.encode(f.data) : f.data, crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+    h.setUint16(10, dosTime, true); h.setUint16(12, dosDate, true);
+    h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(h.buffer), name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+    c.setUint16(12, dosTime, true); c.setUint16(14, dosDate, true);
+    c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(new Uint8Array(c.buffer), name);
+    off += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, cdSize, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: "application/zip" });
+}
+// Build a 3MF package (units: mm) from a flat triangle list [x,y,z, x,y,z, ...].
+function build3mf(pos, title){
+  const map = new Map(), verts = [], tris = [];
+  const fmtN = v => { const r = Math.round(v * 1e5) / 1e5; return Object.is(r, -0) ? "0" : String(r); };
+  const idx = i => {
+    const x = fmtN(pos[i]), y = fmtN(pos[i + 1]), z = fmtN(pos[i + 2]), k = x + " " + y + " " + z;
+    let n = map.get(k);
+    if (n === undefined){ n = verts.length; map.set(k, n); verts.push(`<vertex x="${x}" y="${y}" z="${z}"/>`); }
+    return n;
+  };
+  for (let i = 0; i < pos.length; i += 9){
+    const a = idx(i), b = idx(i + 3), c = idx(i + 6);
+    if (a !== b && b !== c && a !== c) tris.push(`<triangle v1="${a}" v2="${b}" v3="${c}"/>`);
+  }
+  const esc = t => t.replace(/[<>&"]/g, ch => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[ch]));
+  const model = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n' +
+    `<metadata name="Title">${esc(title)}</metadata>\n<metadata name="Application">Pocket SCAD</metadata>\n` +
+    '<resources>\n<object id="1" type="model"><mesh>\n<vertices>\n' + verts.join("\n") + '\n</vertices>\n<triangles>\n' + tris.join("\n") +
+    '\n</triangles>\n</mesh></object>\n</resources>\n<build><item objectid="1"/></build>\n</model>\n';
+  const types = '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>';
+  const rels = '<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>';
+  return { blob: zip([{ name: "[Content_Types].xml", data: types }, { name: "_rels/.rels", data: rels }, { name: "3D/3dmodel.model", data: model }]), triangles: tris.length };
+}
+function saveBlob(blob, filename){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+function baseName(){
+  const m = codeEl.value.match(/^\s*\/\/\s*([^\n]{1,40})/);
+  const raw = m ? m[1] : "model";
+  return raw.replace(/\.\s.*$/, "").replace(/[^A-Za-z0-9äöüÄÖÜß _-]+/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "model";
+}
+$("exportStl").addEventListener("click", () => {
+  if (!lastStl) return;
+  const name = baseName() + ".stl";
+  saveBlob(new Blob([lastStl], { type: "model/stl" }), name);
+  toast(`Saved ${name}`); afterExport();
+});
+$("export3mf").addEventListener("click", () => {
+  if (!mesh) return;
+  const name = baseName() + ".3mf";
+  const { blob } = build3mf(mesh.geometry.attributes.position.array, baseName());
+  saveBlob(blob, name);
+  toast(`Saved ${name}`); afterExport();
+});
+
+/* ---------- About dialog ---------- */
+const aboutDlg = $("aboutDialog");
+$("srcLink").href = SOURCE_URL;
+$("licLink").href = `${SOURCE_URL}/blob/${SOURCE_BRANCH}/LICENSE`;
+$("tpLink").href = `${SOURCE_URL}/blob/${SOURCE_BRANCH}/THIRD_PARTY_NOTICES.md`;
+$("aboutLink").addEventListener("click", ev => {
+  ev.preventDefault();
+  if (typeof aboutDlg.showModal === "function") aboutDlg.showModal();
+});
+
+/* ---------- Tip popup ---------- */
+const tipDlg = $("tipDialog");
+$("tipGo").href = TIP_URL;
+$("supportLink").href = TIP_URL;
+$("supportLink").target = "_blank"; $("supportLink").rel = "noopener";
+function afterExport(){
+  if (store.get("pocketscad.tip.never") === "1") return;
+  const n = (parseInt(store.get("pocketscad.exports") || "0", 10) || 0) + 1;
+  store.set("pocketscad.exports", String(n));
+  if (n === 1 || n % TIP_EVERY === 0){
+    setTimeout(() => { if (typeof tipDlg.showModal === "function" && !tipDlg.open) tipDlg.showModal(); }, 600);
+  }
+}
+tipDlg.addEventListener("close", () => { if ($("tipNever").checked) store.set("pocketscad.tip.never", "1"); });
+$("tipGo").addEventListener("click", () => { store.set("pocketscad.tip.never", "1"); tipDlg.close(); });
+
+/* ---------- Boot ---------- */
+buildParams();
+status("busy", "Loading engine…");
+engineLoad().then(mode => {
+  ready = true;
+  $("renderBtn").disabled = false;
+  status("ok", mode === "worker" ? "Engine ready" : "Engine ready (no background worker)");
+  overlay("Engine ready", "Rendering the example…", true);
+  doRender();
+}).catch(e => {
+  status("err", "Engine failed to load");
+  overlay("Couldn't load the OpenSCAD engine", "The OpenSCAD engine file didn't load. Check that vendor/openscad/openscad.js exists (or that you're online for the CDN fallback), then reload. Details are in the console.", false);
+  log("e", "Engine load error: " + (e && e.message || e));
+  $("consoleBox").open = true;
+});
+</script>
+
+</body>
+</html>
